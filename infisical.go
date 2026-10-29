@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
+	"strings"
 	"time"
 )
 
@@ -93,11 +95,117 @@ func query(e Export) url.Values {
 	return url.Values{"projectId": {e.ProjectID}, "environment": {e.Environment}, "secretPath": {e.Path}, "type": {"shared"},
 		"includeImports": {"false"}, "expandSecretReferences": {"false"}, "viewSecretValue": {"true"}}
 }
-func (a *apiClient) folder(ctx context.Context, e Export) error {
+
+type targetFolder struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func (a *apiClient) folders(ctx context.Context, e Export) ([]targetFolder, error) {
 	q := url.Values{"workspaceId": {e.ProjectID}, "environment": {e.Environment}, "path": {e.Path}}
-	return a.request(ctx, "GET", "/api/v1/folders?"+q.Encode(), nil, &struct {
-		Folders []any `json:"folders"`
-	}{})
+	var result struct {
+		Folders []targetFolder `json:"folders"`
+	}
+	err := a.request(ctx, "GET", "/api/v1/folders?"+q.Encode(), nil, &result)
+	return result.Folders, err
+}
+
+func hasFolder(folders []targetFolder, name string) bool {
+	for _, f := range folders {
+		if f.Name == name && f.ID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+type folderOperation struct {
+	export Export // Path is the parent; name is the child to create.
+	name   string
+}
+
+type folderPlanner struct {
+	listings map[string][]targetFolder
+	missing  map[string]bool
+	creates  []folderOperation
+}
+
+func folderIdentity(a *apiClient, e Export) string {
+	// Aliases for the same physical destination share one folder plan.
+	return strings.ToLower(a.base) + "\x00" + e.ProjectID + "\x00" + e.Environment + "\x00" + e.Path
+}
+
+func (p *folderPlanner) inspect(ctx context.Context, a *apiClient, e Export, prefixes []string) (bool, error) {
+	// Listing a nonexistent path can return an empty list. Walk from the root
+	// instead of interpreting a successful list request as proof of existence.
+	parent := e
+	parent.Path = "/"
+	parts := []string{}
+	if e.Path != "/" {
+		parts = strings.Split(strings.TrimPrefix(e.Path, "/"), "/")
+	}
+	for i := 0; ; i++ {
+		id := folderIdentity(a, parent)
+		children, cached := p.listings[id]
+		if !cached && !p.missing[id] {
+			var err error
+			children, err = a.folders(ctx, parent)
+			if err != nil {
+				return false, err
+			}
+			p.listings[id] = children
+		}
+		if i == len(parts) {
+			return !p.missing[id], nil
+		}
+		child := parent
+		child.Path = path.Join(parent.Path, parts[i])
+		if !hasFolder(children, parts[i]) {
+			// Ancestors above the allowed prefix may be traversed, but must
+			// already exist. Never create outside the configured allowlist.
+			if !allowedPath(child.Path, prefixes) {
+				return false, errors.New("missing ancestor folder is outside allowed paths")
+			}
+			childID := folderIdentity(a, child)
+			if !p.missing[childID] {
+				p.creates = append(p.creates, folderOperation{parent, parts[i]})
+				p.missing[childID] = true
+			}
+		}
+		parent = child
+	}
+}
+
+func (a *apiClient) createFolder(ctx context.Context, op folderOperation) (bool, error) {
+	children, err := a.folders(ctx, op.export)
+	if err != nil {
+		return false, err
+	}
+	if hasFolder(children, op.name) {
+		return false, nil
+	}
+	var result struct {
+		Folder targetFolder `json:"folder"`
+	}
+	err = a.request(ctx, "POST", "/api/v1/folders", map[string]string{
+		"workspaceId": op.export.ProjectID, "environment": op.export.Environment,
+		"path": op.export.Path, "name": op.name,
+	}, &result)
+	if err != nil {
+		// A concurrent creator may win after the read. Confirm existence;
+		// never swallow authorization, transport or unrelated API failures.
+		var status apiError
+		if errors.As(err, &status) && (status.status == 400 || status.status == 409) {
+			if children, checkErr := a.folders(ctx, op.export); checkErr == nil && hasFolder(children, op.name) {
+				return false, nil
+			}
+		}
+		return false, err
+	}
+	if result.Folder.ID == "" || result.Folder.Name != op.name {
+		return false, errors.New("folder creation not confirmed")
+	}
+	return true, nil
 }
 func (a *apiClient) get(ctx context.Context, e Export) (*targetSecret, error) {
 	var result struct {
@@ -136,12 +244,14 @@ func (a *apiClient) write(ctx context.Context, e Export, create bool) error {
 }
 
 type Summary struct {
-	Mode      string `json:"mode"`
-	Exports   int    `json:"exports"`
-	Create    int    `json:"create"`
-	Update    int    `json:"update"`
-	Unchanged int    `json:"unchanged"`
-	Written   int    `json:"written"`
+	Mode           string `json:"mode"`
+	Exports        int    `json:"exports"`
+	Create         int    `json:"create"`
+	Update         int    `json:"update"`
+	Unchanged      int    `json:"unchanged"`
+	Written        int    `json:"written"`
+	FoldersCreate  int    `json:"foldersCreate"`
+	FoldersCreated int    `json:"foldersCreated"`
 }
 type operation struct {
 	export   Export
@@ -154,7 +264,7 @@ func synchronize(ctx context.Context, c Config, exports []Export, apply bool, ou
 		summary.Mode = "apply"
 	}
 	clients := map[string]*apiClient{}
-	folders := map[string]bool{}
+	folders := folderPlanner{listings: map[string][]targetFolder{}, missing: map[string]bool{}}
 	var operations []operation
 	// Preflight every target before the first write, including dry-run ownership checks.
 	for index, e := range exports {
@@ -168,14 +278,15 @@ func synchronize(ctx context.Context, c Config, exports []Export, apply bool, ou
 			}
 			clients[e.Destination] = a
 		}
-		folderID := e.Destination + "\x00" + e.ProjectID + "\x00" + e.Environment + "\x00" + e.Path
-		if !folders[folderID] {
-			if err := a.folder(ctx, e); err != nil {
-				return fmt.Errorf("target %d folder preflight: %w", index+1, err)
-			}
-			folders[folderID] = true
+		project := c.Destinations[e.Destination].Projects[e.ProjectAlias]
+		exists, err := folders.inspect(ctx, a, e, project.PathPrefixes)
+		if err != nil {
+			return fmt.Errorf("target %d folder preflight: %w", index+1, err)
 		}
-		previous, err := a.get(ctx, e)
+		var previous *targetSecret
+		if exists {
+			previous, err = a.get(ctx, e)
+		}
 		if err != nil {
 			return fmt.Errorf("target %d preflight: %w", index+1, err)
 		}
@@ -193,7 +304,17 @@ func synchronize(ctx context.Context, c Config, exports []Export, apply bool, ou
 		}
 		operations = append(operations, operation{e, previous})
 	}
+	summary.FoldersCreate = len(folders.creates)
 	if apply {
+		for index, op := range folders.creates {
+			created, err := clients[op.export.Destination].createFolder(ctx, op)
+			if err != nil {
+				return fmt.Errorf("folder creation %d failed after %d successful folder creations: %w", index+1, summary.FoldersCreated, err)
+			}
+			if created {
+				summary.FoldersCreated++
+			}
+		}
 		for index, op := range operations {
 			a := clients[op.export.Destination]
 			// Detect intervening edits. Single-writer deployment is still required (API has no CAS).

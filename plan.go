@@ -28,7 +28,7 @@ type Item struct {
 	} `json:"login"`
 }
 type Export struct {
-	Destination, ProjectID, Environment, Path, Key, Value, Owner string
+	Destination, ProjectAlias, ProjectID, Environment, Path, Key, Value, Owner string
 }
 
 func resolve(item Item, selector string) (*string, error) {
@@ -164,8 +164,9 @@ func buildPlan(c Config, items []Item) ([]Export, error) {
 				return fail("multiple exports target the same secret")
 			}
 			seen[identity] = true
-			exports = append(exports, Export{alias, project.ID, environment, folder, key, *value,
-				"vaultwarden-sync:v1:" + c.SourceID + ":" + item.ID + ":" + key})
+			exports = append(exports, Export{Destination: alias, ProjectAlias: projectAlias, ProjectID: project.ID,
+				Environment: environment, Path: folder, Key: key, Value: *value,
+				Owner: "vaultwarden-sync:v1:" + c.SourceID + ":" + item.ID + ":" + key})
 			count++
 		}
 		if count == 0 {

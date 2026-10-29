@@ -2,8 +2,8 @@ apiVersion: v2
 name: home-secrets-sync
 description: Selectively synchronize Vaultwarden items to Infisical
 type: application
-version: 0.1.0
-appVersion: "v0.1.0"
+version: 0.2.0
+appVersion: "v0.2.0"
 home: https://github.com/rclsilver-org/home-secrets-sync
 sources:
   - https://github.com/rclsilver-org/home-secrets-sync

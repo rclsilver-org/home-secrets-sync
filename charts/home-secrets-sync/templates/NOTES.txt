@@ -4,7 +4,8 @@ Suspended: {{ .Values.suspend }}
 Dry-run: {{ .Values.dryRun }}
 
 Provide credentials in the existing Secret {{ .Values.existingSecret }}.
-Create the destination projects, environments and folders before running.
+Create the destination projects and environments before running.
+Missing folders within allowed paths are created automatically in apply mode.
 
 Run a manual Job using the current dry-run/apply setting:
   kubectl -n {{ .Release.Namespace }} create job --from=cronjob/{{ $name }} {{ $name }}-review

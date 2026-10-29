@@ -30,10 +30,18 @@ maps to its project UUID in the configuration.
 
 `sync.environment` is optional and defaults to **`production`** when absent.
 An explicitly empty environment is invalid. The selected environment and folder
-must be in the configuration's allowlists and must already exist in Infisical.
-They can be provisioned with Terraform without passing secret values through
-Terraform state. A path prefix `/aiga` allows that folder and its descendants,
-while `/aiga-other` is excluded. A prefix `/` allows the whole project.
+must be in the configuration's allowlists. The project and environment must
+already exist in Infisical; they can be provisioned with Terraform without
+passing secret values through Terraform state.
+
+Missing destination folders are created automatically in apply mode, including
+intermediate folders within the allowed paths. A dry-run reports planned folder
+creations without creating anything. Existing folders are reused and never
+deleted. A path prefix `/aiga` allows creating that folder and its descendants,
+while `/aiga-other` is excluded. Ancestors above the allowed prefix must already
+exist: with prefix `/apps/aiga`, create `/apps` separately or allow `/apps` if
+the synchronizer should create it too. A prefix `/` allows the whole project.
+The synchronizer identity needs permission to list and create these folders.
 
 Supported sources:
 
@@ -53,8 +61,8 @@ execution, templates or arbitrary JSON expressions.
 
 Published artifacts:
 
-- Image: `ghcr.io/rclsilver-org/home-secrets-sync:v0.1.0`
-- Chart: `oci://ghcr.io/rclsilver-org/charts/home-secrets-sync`, version `0.1.0`
+- Image: `ghcr.io/rclsilver-org/home-secrets-sync:v0.2.0`
+- Chart: `oci://ghcr.io/rclsilver-org/charts/home-secrets-sync`, version `0.2.0`
 - Architectures: Linux amd64 and arm64.
 
 Create a dedicated source account with values-visible, read-only access to the
@@ -88,7 +96,7 @@ The chart injects its own runtime directory and bundled CLI path.
 ```sh
 helm upgrade --install secrets-sync \
   oci://ghcr.io/rclsilver-org/charts/home-secrets-sync \
-  --version 0.1.0 --namespace secrets --create-namespace \
+  --version 0.2.0 --namespace secrets --create-namespace \
   --values values.yaml --wait
 
 # Defaults: suspended, dryRun=true. Review a manual dry-run first.
@@ -140,7 +148,8 @@ through the environment, never command arguments. Decrypted values are held in
 memory and are not written to an intermediate file.
 
 Output is a JSON summary containing `mode`, `exports`, `create`, `update`,
-`unchanged` and `written`. Errors identify source or target indexes with
+`unchanged`, `written`, `foldersCreate` (planned) and `foldersCreated` (confirmed
+creations in this run). Errors identify source or target indexes with
 controlled messages; CLI diagnostics and server response bodies are suppressed.
 No item names, IDs or secret values are logged. Exit status 0 means success,
 1 means failure, and 2 means invalid arguments. A run has a five-minute context
@@ -148,9 +157,10 @@ deadline; individual HTTP requests and CLI commands have shorter timeouts.
 
 ## Update and ownership rules
 
-Every selected export and destination is checked before the first write. A
-dry-run authenticates and compares current destination values but does not
-create or update secrets. Imported secrets and reference expansion are disabled
+Every selected export and destination is checked before the first write,
+including folder creation. A dry-run authenticates and compares current
+destination values but does not create folders or create or update secrets.
+Imported secrets and reference expansion are disabled
 for comparisons. Multiline values are transmitted literally.
 
 The synchronizer owns a destination secret through a stable comment:
@@ -164,7 +174,11 @@ changed in Vaultwarden update the corresponding managed secrets. **Nothing is
 automatically deleted**, including when an item is disabled, renamed, moved or
 removed. Review consumers before manually removing an old destination.
 
-Writes are individual API operations, not a transaction across all exports.
+Folder creations and secret writes are individual API operations, not a
+transaction across all exports. All planned folders are created before secret
+writes begin. If a folder creation fails, earlier folder creations remain and
+no secret writes begin; replaying reuses those folders. No folders are removed
+when exports are disabled or moved.
 The destination is read again before writing to detect intervening edits, but
 the API has no atomic compare-and-swap for this operation. Use a single writer.
 A transport failure may occur after a write committed but before it was

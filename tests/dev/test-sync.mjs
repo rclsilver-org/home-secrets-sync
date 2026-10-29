@@ -12,7 +12,8 @@ const vw = process.env.DEV_VAULTWARDEN_URL;
 assert.match(vw, /^https:\/\/\d+\.\d+\.\d+\.\d+:8443$/);
 const password = 'Development-fixture-master-password-2026!';
 const email = `sync-${randomUUID()}@secrets-sync.invalid`;
-const folder = `/sync-test-${randomUUID()}`;
+const folderRoot = `/sync-test-${randomUUID()}`;
+const folder = `${folderRoot}/aiga`;
 
 async function api(origin, path, body, token = state.token, method = 'POST', expected = 200) {
   const response = await fetch(origin + path, {
@@ -63,7 +64,12 @@ async function identity(role) {
 }
 const writer = await identity('member');
 const viewer = await identity('viewer');
-await api(base, '/api/v1/folders', { workspaceId: state.projectId, environment: 'production', path: '/', name: folder.slice(1) });
+async function rootFolderExists() {
+  const query = new URLSearchParams({ workspaceId: state.projectId, environment: 'production', path: '/' });
+  const { folders } = await api(base, `/api/v1/folders?${query}`, undefined, state.token, 'GET');
+  return folders.some(f => f.name === folderRoot.slice(1));
+}
+assert.equal(await rootFolderExists(), false, 'Fixture folder must initially be absent');
 
 const bwEnv = { PATH: process.env.PATH, HOME: '/scratch', TMPDIR: '/scratch', BITWARDENCLI_APPDATA_DIR: '/scratch/owner', BW_CLIENTID: `user.${profile.id}`, BW_CLIENTSECRET: key.apiKey, BW_PASSWORD: password, NODE_EXTRA_CA_CERTS: '/dev-ca.crt', BW_NOINTERACTION: 'true' };
 function bw(args, input) {
@@ -73,7 +79,7 @@ function bw(args, input) {
 }
 const config = {
   sourceID: 'integration-fixture', vaultwarden: { server: vw, runtimeDir: '/scratch', binary: '/usr/local/bin/bw' },
-  destinations: { 'infisical-dev': { url: base, allowInsecureHTTP: true, projects: { 'backend-secrets': { id: state.projectId, environments: ['production'], pathPrefixes: [folder] } } } },
+  destinations: { 'infisical-dev': { url: base, allowInsecureHTTP: true, projects: { 'backend-secrets': { id: state.projectId, environments: ['production'], pathPrefixes: [folderRoot] } } } },
 };
 writeFileSync('/scratch/config.json', JSON.stringify(config), { mode: 0o600 });
 const syncEnv = { PATH: process.env.PATH, NODE_EXTRA_CA_CERTS: '/dev-ca.crt', BW_CLIENTID: bwEnv.BW_CLIENTID, BW_CLIENTSECRET: key.apiKey, BW_PASSWORD: password, INFISICAL_CLIENT_ID: writer.clientId, INFISICAL_CLIENT_SECRET: writer.clientSecret };
@@ -109,18 +115,23 @@ try {
   let item = JSON.parse(bw(['create', 'item', Buffer.from(JSON.stringify(fixture())).toString('base64')]));
   let report = sync(false);
   assert.equal(report.create, 3); assert.equal(report.written, 0);
-  console.log('PASS: API-key login/unlock and dry-run of three exports.');
+  assert.equal(report.foldersCreate, 2); assert.equal(report.foldersCreated, 0);
+  assert.equal(await rootFolderExists(), false, 'Dry-run created a folder');
+  console.log('PASS: API-key login/unlock; dry-run plans three exports and two folders without creating either.');
   // Readonly identity may plan, but the server must reject actual writes.
   const viewerFailure = sync(true, true, viewer);
   assert.match(viewerFailure, /HTTP 403/);
   assert.equal(sync(false).create, 3, 'Viewer unexpectedly created secrets');
-  report = sync(true); assert.equal(report.written, 3);
+  assert.equal(await rootFolderExists(), false, 'Viewer unexpectedly created a folder');
+  report = sync(true); assert.equal(report.written, 3); assert.equal(report.foldersCreated, 2);
+  assert.equal(await rootFolderExists(), true);
   for (const [name,value] of [['AIGA_URL','https://aiga.example.invalid/login'],['AIGA_USERNAME','synthetic-user'],['AIGA_PASSWORD','Synthetic-password-v1!']]) {
     assert.equal((await getSecret(name)).secretValue, value, 'Export differs from Vaultwarden');
   }
   const first = await getSecret('AIGA_PASSWORD');
-  console.log('PASS: Viewer write denied; writer created URL, username and password.');
+  console.log('PASS: Viewer folder creation denied; writer created nested folders, URL, username and password.');
   report = sync(true); assert.equal(report.unchanged, 3); assert.equal(report.written, 0);
+  assert.equal(report.foldersCreate, 0); assert.equal(report.foldersCreated, 0);
   assert.equal((await getSecret('AIGA_PASSWORD')).version, first.version, 'No-op produced a new secret version');
   item.login.password = 'Synthetic-password-v2!'; edit(item);
   report = sync(true); assert.equal(report.update, 1); assert.equal(report.written, 1);
