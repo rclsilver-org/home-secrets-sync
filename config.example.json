@@ -1,0 +1,20 @@
+{
+  "sourceID": "example-source",
+  "vaultwarden": {
+    "server": "https://vaultwarden.example.invalid",
+    "runtimeDir": "/run/home-secrets-sync/private",
+    "binary": "bw"
+  },
+  "destinations": {
+    "infisical": {
+      "url": "https://infisical.example.invalid",
+      "projects": {
+        "backend-secrets": {
+          "id": "REPLACE_WITH_PROJECT_UUID",
+          "environments": ["production"],
+          "pathPrefixes": ["/aiga"]
+        }
+      }
+    }
+  }
+}

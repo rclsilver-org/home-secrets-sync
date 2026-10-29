@@ -1,0 +1,7 @@
+/dist/
+/.scratch/
+*.env
+*.sops.yaml
+*.private.*
+/config.json
+coverage.out

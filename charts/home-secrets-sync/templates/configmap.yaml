@@ -1,0 +1,11 @@
+{{- $config := deepCopy .Values.config -}}
+{{- $_ := set $config.vaultwarden "runtimeDir" "/run/home-secrets-sync/private" -}}
+{{- $_ := set $config.vaultwarden "binary" "/usr/local/bin/bw" -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "home-secrets-sync.name" . }}
+  labels:
+    {{- include "home-secrets-sync.labels" . | nindent 4 }}
+data:
+  config.json: {{ $config | toJson | quote }}

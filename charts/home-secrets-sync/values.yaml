@@ -1,0 +1,57 @@
+image:
+  repository: ghcr.io/rclsilver-org/home-secrets-sync
+  tag: "" # Defaults to Chart.appVersion.
+  digest: "" # Takes precedence over tag when set.
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Installation starts suspended and in dry-run mode. Review a manual Job first.
+schedule: "*/5 * * * *"
+timeZone: Etc/UTC
+suspend: true
+dryRun: true
+successfulJobsHistoryLimit: 1
+failedJobsHistoryLimit: 3
+startingDeadlineSeconds: 60
+activeDeadlineSeconds: 360
+backoffLimit: 0 # Avoid repeated authentication attempts after a configuration error.
+
+existingSecret: home-secrets-sync-credentials
+podLabels: {}
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 768Mi
+runtimeSizeLimit: 128Mi
+
+# References only. Never store credentials or exported values in Helm values.
+# runtimeDir and binary are fixed by the chart to its RAM volume and bundled CLI.
+config:
+  sourceID: example-source
+  vaultwarden:
+    server: https://vaultwarden.example.invalid
+  destinations:
+    infisical:
+      url: https://infisical.example.invalid
+      projects:
+        backend-secrets:
+          id: REPLACE_WITH_PROJECT_UUID
+          environments: [production]
+          pathPrefixes: [/aiga]
+
+# Optional extra public CA bundle in an existing ConfigMap, key ca.crt.
+# This augments Node's trust and supplies Go with a complete system+custom bundle.
+caConfigMap: ""
+
+# Opt-in because the actual egress selectors/CIDRs depend on the cluster.
+networkPolicy:
+  enabled: false
+  egress: []

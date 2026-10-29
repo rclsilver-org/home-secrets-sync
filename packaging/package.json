@@ -1,0 +1,8 @@
+{
+  "name": "home-secrets-sync-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@bitwarden/cli": "2026.4.2"
+  }
+}

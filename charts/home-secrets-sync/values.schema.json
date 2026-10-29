@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["image", "existingSecret", "config", "schedule", "suspend", "dryRun"],
+  "properties": {
+    "image": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "tag", "digest", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {"type": "string"},
+        "digest": {"type": "string", "pattern": "^(sha256:[a-f0-9]{64})?$"},
+        "pullPolicy": {"enum": ["Always", "IfNotPresent", "Never"]}
+      }
+    },
+    "imagePullSecrets": {"type": "array", "items": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}}},
+    "existingSecret": {"type": "string", "minLength": 1},
+    "schedule": {"type": "string", "minLength": 1},
+    "timeZone": {"type": "string", "minLength": 1},
+    "suspend": {"type": "boolean"},
+    "dryRun": {"type": "boolean"},
+    "successfulJobsHistoryLimit": {"type": "integer", "minimum": 0},
+    "failedJobsHistoryLimit": {"type": "integer", "minimum": 0},
+    "startingDeadlineSeconds": {"type": "integer", "minimum": 10},
+    "activeDeadlineSeconds": {"type": "integer", "minimum": 315},
+    "backoffLimit": {"type": "integer", "minimum": 0},
+    "runtimeSizeLimit": {"type": "string", "minLength": 1},
+    "podLabels": {"type": "object", "additionalProperties": {"type": "string"}},
+    "podAnnotations": {"type": "object", "additionalProperties": {"type": "string"}},
+    "nodeSelector": {"type": "object", "additionalProperties": {"type": "string"}},
+    "tolerations": {"type": "array"},
+    "affinity": {"type": "object"},
+    "resources": {"type": "object"},
+    "caConfigMap": {"type": "string"},
+    "networkPolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "egress"],
+      "properties": {"enabled": {"type": "boolean"}, "egress": {"type": "array"}}
+    },
+    "config": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sourceID", "vaultwarden", "destinations"],
+      "properties": {
+        "sourceID": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"},
+        "vaultwarden": {
+          "type": "object", "additionalProperties": false, "required": ["server"],
+          "properties": {"server": {"type": "string", "pattern": "^https://"}}
+        },
+        "destinations": {
+          "type": "object", "minProperties": 1,
+          "additionalProperties": {"$ref": "#/definitions/destination"}
+        }
+      }
+    }
+  },
+  "definitions": {
+    "destination": {
+      "type": "object", "additionalProperties": false, "required": ["url", "projects"],
+      "properties": {
+        "url": {"type": "string", "pattern": "^https?://"},
+        "allowInsecureHTTP": {"type": "boolean"},
+        "clientIDEnv": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+        "clientSecretEnv": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+        "projects": {
+          "type": "object", "minProperties": 1,
+          "additionalProperties": {
+            "type": "object", "additionalProperties": false,
+            "required": ["id", "environments", "pathPrefixes"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "environments": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+              "pathPrefixes": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^/"}}
+            }
+          }
+        }
+      }
+    }
+  }
+}

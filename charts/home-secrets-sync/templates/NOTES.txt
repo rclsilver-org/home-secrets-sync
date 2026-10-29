@@ -1,0 +1,13 @@
+{{- $name := include "home-secrets-sync.name" . }}
+home-secrets-sync is installed.
+Suspended: {{ .Values.suspend }}
+Dry-run: {{ .Values.dryRun }}
+
+Provide credentials in the existing Secret {{ .Values.existingSecret }}.
+Create the destination projects, environments and folders before running.
+
+Run a manual Job using the current dry-run/apply setting:
+  kubectl -n {{ .Release.Namespace }} create job --from=cronjob/{{ $name }} {{ $name }}-review
+
+Review its counters and errors before enabling scheduled writes.
+Use a single release/writer per destination scope. Never place values in Helm.

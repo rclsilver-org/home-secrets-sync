@@ -1,0 +1,11 @@
+*
+!go.mod
+!*.go
+!*_test.go
+!packaging/
+!packaging/package.json
+!packaging/package-lock.json
+!packaging/bw
+!packaging/licenses/
+!packaging/licenses/*
+!Dockerfile
