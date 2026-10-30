@@ -1,6 +1,7 @@
 {{- $config := deepCopy .Values.config -}}
 {{- $_ := set $config.vaultwarden "runtimeDir" "/run/home-secrets-sync/private" -}}
 {{- $_ := set $config.vaultwarden "binary" "/usr/local/bin/bw" -}}
+{{- $_ := set $config.vaultwarden "stateDir" "/var/lib/home-secrets-sync" -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
