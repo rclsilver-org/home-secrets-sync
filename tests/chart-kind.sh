@@ -12,11 +12,13 @@ kubectl -n chart-test create secret generic home-secrets-sync-credentials \
   --from-literal=BW_PASSWORD=synthetic --from-literal=INFISICAL_CLIENT_ID=synthetic \
   --from-literal=INFISICAL_CLIENT_SECRET=synthetic
 helm install smoke charts/home-secrets-sync -n chart-test \
-  --set image.repository=home-secrets-sync --set image.tag=dev --set image.pullPolicy=Never --wait
+  --set image.repository=home-secrets-sync --set image.tag=dev --set image.pullPolicy=Never
+# No --wait: the PVC binds on first use (WaitForFirstConsumer) and the Deployment starts suspended.
 # Keep the rendered Pod's security context, volumes, Secret and initialization.
 # Only replace the final command so the smoke test needs no real credentials.
-kubectl -n chart-test create job --from=cronjob/smoke-home-secrets-sync smoke --dry-run=client -o json |
-  jq '.spec.template.spec.containers[0].args[0] |= sub("exec /usr/local/bin/home-secrets-sync.*"; "test -w /run/home-secrets-sync/private; /usr/local/bin/bw --version; exec /usr/local/bin/home-secrets-sync -version")' > "$scratch/chart-smoke-job.json"
+kubectl -n chart-test get deploy/smoke-home-secrets-sync -o json |
+  jq '{apiVersion: "batch/v1", kind: "Job", metadata: {name: "smoke", namespace: "chart-test"}, spec: {template: (.spec.template | .spec.restartPolicy = "Never")}}
+    | .spec.template.spec.containers[0].args[0] |= sub("exec /usr/local/bin/home-secrets-sync.*"; "test -w /run/home-secrets-sync/private; test -w /var/lib/home-secrets-sync; /usr/local/bin/bw --version; exec /usr/local/bin/home-secrets-sync -version")' > "$scratch/chart-smoke-job.json"
 kubectl create -f "$scratch/chart-smoke-job.json"
 if ! kubectl -n chart-test wait --for=condition=complete job/smoke --timeout=180s; then
   kubectl -n chart-test describe job smoke

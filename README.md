@@ -5,8 +5,8 @@ Infisical for your applications. Routing lives on the vault item as custom
 fields; Git stores the allowed destinations and deployment configuration.
 
 The synchronizer uses the official Bitwarden CLI to decrypt the source and
-Infisical Universal Auth to access the destination. It runs once, reports
-counters, and exits. The Helm chart schedules these executions without overlap.
+Infisical Universal Auth to access the destination. It reports counters after
+each synchronization. The Helm chart runs it as a daemon (one Deployment replica).
 
 ## Select fields in Vaultwarden
 
@@ -61,8 +61,8 @@ execution, templates or arbitrary JSON expressions.
 
 Published artifacts:
 
-- Image: `ghcr.io/rclsilver-org/home-secrets-sync:v0.2.0`
-- Chart: `oci://ghcr.io/rclsilver-org/charts/home-secrets-sync`, version `0.2.0`
+- Image: `ghcr.io/rclsilver-org/home-secrets-sync:v0.3.0`
+- Chart: `oci://ghcr.io/rclsilver-org/charts/home-secrets-sync`, version `0.3.0`
 - Architectures: Linux amd64 and arm64.
 
 Create a dedicated source account with values-visible, read-only access to the
@@ -96,24 +96,27 @@ The chart injects its own runtime directory and bundled CLI path.
 ```sh
 helm upgrade --install secrets-sync \
   oci://ghcr.io/rclsilver-org/charts/home-secrets-sync \
-  --version 0.2.0 --namespace secrets --create-namespace \
+  --version 0.3.0 --namespace secrets --create-namespace \
   --values values.yaml --wait
 
-# Defaults: suspended, dryRun=true. Review a manual dry-run first.
-kubectl -n secrets create job --from=cronjob/secrets-sync-home-secrets-sync sync-review
-kubectl -n secrets logs -f job/sync-review
+# Defaults: suspended (0 replicas), dryRun=true. Review a dry-run first.
+kubectl -n secrets scale deploy/secrets-sync-home-secrets-sync --replicas=1
+kubectl -n secrets logs -f deploy/secrets-sync-home-secrets-sync
 ```
 
 After reviewing the run, enable `dryRun: false` and `suspend: false` in your
-values and upgrade the release. By default, it runs every five minutes in UTC,
-with `concurrencyPolicy: Forbid`, no automatic Job retries, and a six-minute
-deadline. Run **one release/writer for a given destination scope**; manual Jobs
-and distinct releases can still overlap. Space authentication attempts to
-respect your Vaultwarden login limits.
+values and upgrade the release. The daemon synchronizes every `interval` (default
+`5m`, minimum `1m`), each run limited to five minutes. A failed run is logged and
+retried at the next tick. The Deployment uses a single replica with the `Recreate`
+strategy. Run **one release/writer for a given destination scope**.
 
 The Pod runs as UID/GID 10001, with a read-only root filesystem, no capabilities,
 no service account token, and a private runtime directory on a memory-backed
-`emptyDir`. No PVC is required. Network access is needed to DNS, Vaultwarden and
+`emptyDir`. A PVC (`persistence.*`, 100Mi by default, or `existingClaim`) stores the
+Bitwarden CLI profile so the device identity and API login survive restarts and
+Vaultwarden stops sending a "new device" mail per run. Set `config.vaultwarden.deviceID`
+to a UUID to pin that identity from the start. The volume holds API tokens, never the
+master password or session key: restrict access to it. Network access is needed to DNS, Vaultwarden and
 Infisical only. Configure `podLabels` and the optional `networkPolicy.egress`
 rules for your cluster; enabling that policy with no rules denies all traffic.
 No Service, ingress, cluster-level RBAC or public endpoint is created.
@@ -137,13 +140,18 @@ private tmpfs runtime directory. The chart performs this setup automatically.
 ```sh
 home-secrets-sync -config config.json          # dry-run
 home-secrets-sync -config config.json -apply   # write differences
+home-secrets-sync -config config.json -apply -interval 5m   # daemon
 home-secrets-sync -version
 ```
 
-The source CLI gets a new private profile each time: API-key login, master
-password unlock, vault sync, item read, then logout and profile removal. Existing
-personal CLI profiles and inherited `BW_SESSION` are not used. Disk-backed
-runtime directories are refused. Credentials are passed to child processes
+The source CLI uses a dedicated profile, never a personal one, and inherited
+`BW_SESSION` is ignored. Without `vaultwarden.stateDir` the profile is private and
+ephemeral on the tmpfs runtime directory: API-key login, master password unlock,
+vault sync, item read, then logout and removal. With `stateDir` (a persistent
+volume) the profile is kept: login is reused while valid, each run only unlocks,
+syncs and reads, and the profile is logged out after a failed run so the next one
+starts clean. The disk-backed `stateDir` holds API tokens; `runtimeDir` must stay on
+tmpfs. Credentials are passed to child processes
 through the environment, never command arguments. Decrypted values are held in
 memory and are not written to an intermediate file.
 

@@ -5,16 +5,11 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
-# Installation starts suspended and in dry-run mode. Review a manual Job first.
-schedule: "*/5 * * * *"
-timeZone: Etc/UTC
+# Installation starts suspended (0 replicas) and in dry-run mode: review the logs of a
+# dry-run before enabling writes. The daemon synchronizes once per interval (>= 1m).
+interval: 5m
 suspend: true
 dryRun: true
-successfulJobsHistoryLimit: 1
-failedJobsHistoryLimit: 3
-startingDeadlineSeconds: 60
-activeDeadlineSeconds: 360
-backoffLimit: 0 # Avoid repeated authentication attempts after a configuration error.
 
 existingSecret: home-secrets-sync-credentials
 podLabels: {}
@@ -32,12 +27,22 @@ resources:
     memory: 768Mi
 runtimeSizeLimit: 128Mi
 
+# Persists the Vaultwarden CLI profile (device identity and API login) between runs.
+# It holds API tokens but neither the master password nor the session key.
+persistence:
+  existingClaim: "" # Use this PVC instead of creating one.
+  storageClass: "" # Empty uses the cluster default.
+  size: 100Mi
+
 # References only. Never store credentials or exported values in Helm values.
-# runtimeDir and binary are fixed by the chart to its RAM volume and bundled CLI.
+# runtimeDir, stateDir and binary are fixed by the chart to its RAM volume and bundled CLI.
 config:
   sourceID: example-source
   vaultwarden:
     server: https://vaultwarden.example.invalid
+    # Stable UUID (not a secret) so Vaultwarden sees one known device instead of
+    # a new one per run, which would send a notification mail every time.
+    deviceID: ""
   destinations:
     infisical:
       url: https://infisical.example.invalid

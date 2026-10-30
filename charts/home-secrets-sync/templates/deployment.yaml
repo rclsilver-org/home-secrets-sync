@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "home-secrets-sync.name" . }}
+  labels:
+    {{- include "home-secrets-sync.labels" . | nindent 4 }}
+spec:
+  replicas: {{ if .Values.suspend }}0{{ else }}1{{ end }}
+  # Single writer on a ReadWriteOnce volume: never run two pods at once.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "home-secrets-sync.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: sync
+          image: {{ include "home-secrets-sync.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              umask 077
+              mkdir -p /run/home-secrets-sync/private
+              chmod 0700 /run/home-secrets-sync/private
+              {{- if .Values.caConfigMap }}
+              cat /etc/ssl/certs/ca-certificates.crt /etc/home-secrets-sync/ca/ca.crt > /run/home-secrets-sync/private/ca-bundle.crt
+              export SSL_CERT_FILE=/run/home-secrets-sync/private/ca-bundle.crt
+              export NODE_EXTRA_CA_CERTS=/etc/home-secrets-sync/ca/ca.crt
+              {{- end }}
+              exec /usr/local/bin/home-secrets-sync -config /etc/home-secrets-sync/config.json -interval {{ .Values.interval }}{{ if not .Values.dryRun }} -apply{{ end }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.existingSecret | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/home-secrets-sync
+              readOnly: true
+            - name: runtime
+              mountPath: /run/home-secrets-sync
+            - name: state
+              mountPath: /var/lib/home-secrets-sync
+            {{- if .Values.caConfigMap }}
+            - name: ca
+              mountPath: /etc/home-secrets-sync/ca
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "home-secrets-sync.name" . }}
+        - name: runtime
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.runtimeSizeLimit }}
+        - name: state
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (include "home-secrets-sync.name" .) | quote }}
+        {{- if .Values.caConfigMap }}
+        - name: ca
+          configMap:
+            name: {{ .Values.caConfigMap | quote }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -20,6 +20,12 @@ type VaultConfig struct {
 	Server     string `json:"server"`
 	RuntimeDir string `json:"runtimeDir"`
 	Binary     string `json:"binary"`
+	// StateDir, when set, persists the CLI profile (device identity and login) across
+	// runs, typically on a PVC. Empty means an ephemeral profile in RuntimeDir.
+	StateDir string `json:"stateDir"`
+	// DeviceID is a stable UUID presented to Vaultwarden as the CLI device.
+	// Without it every run registers a new device and triggers a notification mail.
+	DeviceID string `json:"deviceID"`
 }
 type Destination struct {
 	URL               string             `json:"url"`
@@ -95,6 +101,9 @@ func loadConfig(filename string) (Config, error) {
 func (c *Config) validate() error {
 	if !slug.MatchString(c.SourceID) || !validURL(c.Vaultwarden.Server, false) || c.Vaultwarden.RuntimeDir == "" {
 		return errors.New("sourceID, HTTPS Vaultwarden server and private tmpfs runtimeDir are required")
+	}
+	if c.Vaultwarden.DeviceID != "" && !itemID.MatchString(c.Vaultwarden.DeviceID) {
+		return errors.New("vaultwarden.deviceID must be a UUID")
 	}
 	if c.Vaultwarden.Binary == "" {
 		c.Vaultwarden.Binary = "bw"
