@@ -12,7 +12,8 @@ kubectl -n chart-test create secret generic home-secrets-sync-credentials \
   --from-literal=BW_PASSWORD=synthetic --from-literal=INFISICAL_CLIENT_ID=synthetic \
   --from-literal=INFISICAL_CLIENT_SECRET=synthetic
 helm install smoke charts/home-secrets-sync -n chart-test \
-  --set image.repository=home-secrets-sync --set image.tag=dev --set image.pullPolicy=Never --wait
+  --set image.repository=home-secrets-sync --set image.tag=dev --set image.pullPolicy=Never
+# No --wait: the PVC binds on first use (WaitForFirstConsumer) and the Deployment starts suspended.
 # Keep the rendered Pod's security context, volumes, Secret and initialization.
 # Only replace the final command so the smoke test needs no real credentials.
 kubectl -n chart-test get deploy/smoke-home-secrets-sync -o json |
